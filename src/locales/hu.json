@@ -1,0 +1,31 @@
+{
+  "lastSeen": {
+    "unknown": "Ismeretlen",
+    "unavailable": "Nem érhető el",
+    "lessThanMinute": "< 1 perce",
+    "minutesAgo": "{count} perce",
+    "hoursAgo": "{count} órája",
+    "daysAgo": "{count} napja"
+  },
+  "form": {
+    "name": "Név",
+    "temperature": "Hőmérséklet-entitás",
+    "humidity": "Páratartalom-entitás",
+    "battery": "Akkumulátor-entitás",
+    "lastSeenEntities": "További figyelt entitások",
+    "hoursToShow": "Megjelenített időszak (óra)",
+    "graphColor": "Grafikon színe",
+    "showMinMax": "Min/max értékek megjelenítése",
+    "lastSeenMode": "Utolsó frissítés megjelenítése",
+    "lastSeenAlertMinutes": "Utolsó frissítés figyelmeztetési küszöbe",
+    "minutesUnit": "perc",
+    "options": {
+      "off": "Ki",
+      "temperature": "Csak a hőmérséklet",
+      "configured": "Beállított entitások"
+    },
+    "graphColorHelper": "Válassz a beépített színek közül.",
+    "showMinMaxHelper": "A grafikon legmagasabb és legalacsonyabb értékét jelöli, így látható, mennyire ingadozik.",
+    "lastSeenEntitiesHelper": "A fenti entitások is beleszámítanak az utolsó frissítés idejébe."
+  }
+}

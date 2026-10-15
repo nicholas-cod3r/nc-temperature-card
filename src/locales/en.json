@@ -1,0 +1,31 @@
+{
+  "lastSeen": {
+    "unknown": "Unknown",
+    "unavailable": "Unavailable",
+    "lessThanMinute": "< 1m ago",
+    "minutesAgo": "{count}m ago",
+    "hoursAgo": "{count}h ago",
+    "daysAgo": "{count}d ago"
+  },
+  "form": {
+    "name": "Name",
+    "temperature": "Temperature entity",
+    "humidity": "Humidity entity",
+    "battery": "Battery entity",
+    "lastSeenEntities": "Additional entities to monitor",
+    "hoursToShow": "Displayed period (hours)",
+    "graphColor": "Graph color",
+    "showMinMax": "Show min/max values",
+    "lastSeenMode": "Last-seen mode",
+    "lastSeenAlertMinutes": "Last-seen alert threshold",
+    "minutesUnit": "min",
+    "options": {
+      "off": "Off",
+      "temperature": "Temperature only",
+      "configured": "Configured entities"
+    },
+    "graphColorHelper": "Choose one of the built-in colors.",
+    "showMinMaxHelper": "Marks the highest and lowest values of the graph so you can gauge how much it fluctuates.",
+    "lastSeenEntitiesHelper": "The entities above are included too when calculating the last-seen time."
+  }
+}

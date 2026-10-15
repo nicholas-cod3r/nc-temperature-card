@@ -1,0 +1,236 @@
+name: HACS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment
+        required: true
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+        default: minor
+
+concurrency:
+  group: hacs-release-main
+  cancel-in-progress: false
+
+jobs:
+  validate-hacs:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Validate HACS repository
+        continue-on-error: true
+        uses: hacs/action@main
+        with:
+          category: plugin
+          comment: "false"
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bump version and rebuild bundle
+        id: build
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Releases can only be created from main." >&2
+            exit 1
+          fi
+
+          if [[ ! "$BUMP" =~ ^(major|minor|patch)$ ]]; then
+            echo "Invalid version increment: $BUMP" >&2
+            exit 1
+          fi
+
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Expected a clean checkout before preparing a release." >&2
+            exit 1
+          fi
+
+          npm version "$BUMP" --no-git-tag-version --ignore-scripts
+          npm run build
+
+          version="$(node -p "require('./package.json').version")"
+          tag="v$version"
+          test -s dist/nc-temperature-card.js
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version metadata and create tag
+        id: commit
+        env:
+          TAG: ${{ steps.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            echo "Tag $TAG already exists locally." >&2
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin." >&2
+            exit 1
+          fi
+
+          releases="$(gh release list --limit 1000 --json tagName,isDraft)"
+          if jq -e --arg tag "$TAG" 'any(.[]; .tagName == $tag)' <<< "$releases" >/dev/null; then
+            echo "A GitHub Release for $TAG already exists." >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+
+          staged_files="$(git diff --cached --name-only)"
+          if [[ "$staged_files" != $'package-lock.json\npackage.json' ]]; then
+            echo "Unexpected staged files; refusing to create a release commit:" >&2
+            printf '%s\n' "$staged_files" >&2
+            exit 1
+          fi
+
+          parent_sha="$(git rev-parse HEAD)"
+          git commit -m "Release: $TAG"
+          commit_sha="$(git rev-parse HEAD)"
+          echo "parent_sha=$parent_sha" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          git tag -a "$TAG" "$commit_sha" -m "Release $TAG"
+
+      - name: Push version commit and tag
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
+          TAG: ${{ steps.commit.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git push origin "$COMMIT_SHA:refs/heads/main"
+          git push origin "refs/tags/$TAG:refs/tags/$TAG"
+
+      - name: Create draft release and upload HACS bundle
+        env:
+          TAG: ${{ steps.commit.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --draft \
+            --generate-notes \
+            --title "$TAG" \
+            dist/nc-temperature-card.js
+
+      - name: Verify draft asset
+        id: draft
+        env:
+          TAG: ${{ steps.commit.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release="$(gh release view "$TAG" --json databaseId,isDraft,tagName,assets)"
+          jq -e \
+            --arg tag "$TAG" \
+            '.tagName == $tag and .isDraft and any(.assets[]; .name == "nc-temperature-card.js")' \
+            <<< "$release" >/dev/null
+          echo "release_id=$(jq -r '.databaseId' <<< "$release")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          TAG: ${{ steps.commit.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            | jq -e --arg tag "$TAG" '.tag_name == $tag and .draft == false' >/dev/null
+
+      - name: Roll back unpublished release
+        if: ${{ (failure() || cancelled()) && steps.commit.outputs.commit_sha != '' }}
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
+          PARENT_SHA: ${{ steps.commit.outputs.parent_sha }}
+          TAG: ${{ steps.commit.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          releases="$(gh release list --limit 1000 --json tagName,isDraft)" || {
+            echo "Cannot verify release state; leaving the commit and tag untouched." >&2
+            exit 1
+          }
+          release_state="$(jq -r --arg tag "$TAG" \
+            '[.[] | select(.tagName == $tag)] | if length == 0 then "absent" elif .[0].isDraft then "draft" else "published" end' \
+            <<< "$releases")"
+
+          if [[ "$release_state" == "published" ]]; then
+            echo "Release $TAG is already published; rollback skipped."
+            exit 0
+          fi
+
+          git fetch origin main --tags
+          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ -z "$remote_main" ]]; then
+            echo "Cannot verify origin/main; leaving the commit and tag untouched." >&2
+            exit 1
+          fi
+
+          tag_commit="$(git ls-remote origin "refs/tags/$TAG^{}" | awk '{print $1}')"
+          if [[ -n "$tag_commit" && "$tag_commit" != "$COMMIT_SHA" ]]; then
+            echo "Remote tag $TAG points to an unexpected commit; leaving it untouched." >&2
+            exit 1
+          fi
+
+          if [[ "$remote_main" != "$COMMIT_SHA" ]]; then
+            if git merge-base --is-ancestor "$COMMIT_SHA" origin/main; then
+              echo "main advanced after the release commit; preserving the draft, tag, and history for manual recovery." >&2
+              exit 1
+            fi
+            if [[ "$remote_main" != "$PARENT_SHA" ]]; then
+              echo "main changed unexpectedly; preserving the draft, tag, and history for manual recovery." >&2
+              exit 1
+            fi
+          fi
+
+          if [[ "$release_state" == "draft" ]]; then
+            gh release delete "$TAG" --yes
+          fi
+
+          if [[ "$tag_commit" == "$COMMIT_SHA" ]]; then
+            git push origin ":refs/tags/$TAG"
+          fi
+
+          if [[ "$remote_main" == "$COMMIT_SHA" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git revert --no-edit "$COMMIT_SHA"
+            git push origin HEAD:refs/heads/main
+          fi
