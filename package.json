@@ -1,6 +1,6 @@
 {
   "name": "nc-temperature-card",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "description": "Home Assistant Lovelace temperature card",
   "type": "module",
   "private": true,
